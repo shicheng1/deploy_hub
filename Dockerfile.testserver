@@ -1,0 +1,152 @@
+FROM ubuntu:22.04
+
+# 避免交互式安装提示
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 设置 UTF-8 字符编码（解决中文乱码问题）
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+ENV LANGUAGE=C.UTF-8
+
+# 安装所有必要软件包
+RUN apt-get update && apt-get install -y \
+    openjdk-8-jdk \
+    nginx \
+    redis-server \
+    openssh-server \
+    unzip \
+    sudo \
+    curl \
+    lsof \
+    && rm -rf /var/lib/apt/lists/*
+
+# 配置 root 密码
+RUN echo 'root:root123' | chpasswd
+
+# 配置 SSH：允许 root 登录、密码认证
+RUN sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/^PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config \
+    && sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+# 创建 SSH 运行目录
+RUN mkdir -p /var/run/sshd
+
+# 配置 Nginx - 统一站点配置（基于用户提供的nginx.conf）
+RUN cat > /etc/nginx/sites-available/default << 'EOF'
+server {
+    listen 80;
+    server_name localhost;
+    root /var/www;
+
+    # 皇岗口岸综合查验平台系统
+    location /ims/ {
+        index index.html;
+        try_files $uri $uri/ /ims/index.html?$args;
+    }
+
+    location /ims-prod-api/ {
+        proxy_pass http://localhost:8011/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Content-Type $content_type;
+        proxy_set_header Authorization $http_authorization;
+    }
+
+    # 业务协同系统
+    location /ywxt/ {
+        index index.html;
+        try_files $uri $uri/ /ywxt/index.html?$args;
+    }
+
+    location /ywxt-prod-api/ {
+        proxy_pass http://localhost:8080/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Content-Type $content_type;
+        proxy_set_header Authorization $http_authorization;
+    }
+
+    # 调度系统服务
+    location /dd/ {
+        index index.html;
+        try_files $uri $uri/ /dd/index.html?$args;
+    }
+
+    location /dd-prod-api/ {
+        proxy_pass http://localhost:9000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Content-Type $content_type;
+        proxy_set_header Authorization $http_authorization;
+    }
+
+    # 数字孪生系统服务
+    location /szls/ {
+        index index.html;
+        try_files $uri $uri/ /szls/index.html?$args;
+    }
+
+    location /szls-prod-api/ {
+        proxy_pass http://localhost:8081/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Content-Type $content_type;
+        proxy_set_header Authorization $http_authorization;
+    }
+}
+EOF
+
+# 删除默认站点并启用新配置
+RUN rm -f /etc/nginx/sites-enabled/default \
+    && ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+
+# 创建所有必要的部署目录
+RUN mkdir -p /opt/ims/config \
+    && mkdir -p /opt/ims/logs \
+    && mkdir -p /opt/db-monitor/target \
+    && mkdir -p /opt/db-monitor/logs \
+    && mkdir -p /opt/server-monitor/target \
+    && mkdir -p /opt/server-monitor/logs \
+    && mkdir -p /opt/onestop-service/config \
+    && mkdir -p /opt/onestop-service/logs \
+    && mkdir -p /opt/onestop-service/lib \
+    && mkdir -p /opt/digital-twin/config \
+    && mkdir -p /opt/digital-twin/logs \
+    && mkdir -p /opt/bizcollab/config \
+    && mkdir -p /opt/bizcollab/logs \
+    && mkdir -p /var/www/ims \
+    && mkdir -p /var/www/dd \
+    && mkdir -p /var/www/szls \
+    && mkdir -p /var/www/ywxt \
+    && mkdir -p /home/ims-file/uploadPath
+
+# 暴露端口
+EXPOSE 22 80 8011 8080 8081 9000
+
+# 启动脚本：同时启动 sshd、redis-server、nginx
+RUN cat > /start.sh << 'EOF'
+#!/bin/bash
+set -e
+
+# 启动 SSH
+/usr/sbin/sshd
+
+# 启动 Redis
+redis-server --daemonize yes
+
+# 启动 Nginx
+nginx
+
+# 保持容器运行
+tail -f /dev/null
+EOF
+
+RUN chmod +x /start.sh
+
+CMD ["/start.sh"]

@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: deployhub-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: deploy_hub
+      MYSQL_USER: deploy
+      MYSQL_PASSWORD: deploy123
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION: utf8mb4_general_ci
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci --init-connect='SET NAMES utf8mb4'
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/src/main/resources/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - deployhub-network
+
+  test-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.testserver
+    container_name: deployhub-test-server
+    privileged: true
+    ports:
+      - "2222:22"
+      - "8080:80"
+      - "8011:8011"
+      - "8081:8081"
+      - "9000:9000"
+    environment:
+      SSH_USER: deploy
+      SSH_PASSWORD: deploy123
+    volumes:
+      - server_data:/home/deploy
+    networks:
+      - deployhub-network
+
+volumes:
+  mysql_data:
+  server_data:
+
+networks:
+  deployhub-network:
+    driver: bridge
